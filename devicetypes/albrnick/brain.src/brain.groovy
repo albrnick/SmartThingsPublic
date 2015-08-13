@@ -21,7 +21,6 @@ preferences {
 
 metadata {
 
-
 	definition (name: "Brain", namespace: "albrnick", author: "Nick Albright") {
 		capability "Notification"
 		capability "Polling"
