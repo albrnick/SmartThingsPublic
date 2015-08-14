@@ -17,7 +17,7 @@ definition(
     name: "Smart Room",
     namespace: "albrnick",
     author: "Nick Albright",
-    description: "Room that has lights, presense motion sensors and entrance/exit motion sensor",
+    description: "A Room that automatically turns on lights/switches based on when people enter/leave.  It uses a combination of occupied motion sensors and edge motion sensors to determine when people are there and when they enter/exit",
     category: "Convenience",
     iconUrl: "https://s3.amazonaws.com/smartapp-icons/Convenience/Cat-Convenience.png",
     iconX2Url: "https://s3.amazonaws.com/smartapp-icons/Convenience/Cat-Convenience@2x.png",
@@ -28,7 +28,7 @@ preferences {
 	section("Sensors") {
         input(name: "switches", title: "Lights/Switches to turn on & off", type: "capability.switch", required: "false", multiple: "true")
         input(name: "motions_occupied", title: "Occupied Motion Sensors", type: "capability.motionSensor", required: "false", multiple: "true")
-        input(name: "motions_entrance_exit", title: "Entrance/Exit Motion Sensors", type: "capability.motionSensor", required: "false", multiple: "true")
+        input(name: "motions_edge", title: "Edge Motion Sensors", type: "capability.motionSensor", required: "false", multiple: "true")
 	}
     section("Preferences") {
         input(name: "no_trigger_lights", title: "Disable lights/switches being triggered?", type: "bool" )
@@ -39,22 +39,24 @@ preferences {
     	input(name: "unoccupy_min_seconds", title: "How many seconds to wait for an occupy sensor to trigger before turning off lights? (Default 30)", type: "number",
         	required: "false")
     	input(name: "can_not_be_occupied", title: "Can't be occupied?  (on for hallways, stairs, etc..)", type: "bool" )      
-	}
+	}        
+    section(title: 'Super Advanced', hideable: true, hidden: true) {
+	   	input(name: "do_motion_motion_trigger", title: "Create hook for Smart Room - Motion/Motion/Trigger App", type: "bool" )      
+	   	input(name: "do_occupied_motion_trigger", title: "Create hook for Smart Room - Occupied/Motion/Trigger App", type: "bool" )              
+    }
+
 }
 
 def installed() {
-	log.debug "Installed with settings: ${settings}"
+	Log("Installed with settings: ${settings}")
 
-	state.occupied = False
+	state.occupied = false
 
 	initialize()
 }
 
 def updated() {
-	log.debug "Updated with settings: ${settings}"
-
-	log.debug('OMS ${settings.occupy_min_seconds}')
-	log.debug('OMS ' + settings.occupy_min_seconds)
+	Log("Updated with settings: ${settings}")
 
 	state.occupy_min_seconds = settings.occupy_min_seconds ? settings.occupy_min_seconds : 30
 	state.unoccupy_min_seconds = settings.unoccupy_min_seconds ? settings.unoccupy_min_seconds : 30
@@ -65,10 +67,10 @@ def updated() {
 
 def initialize() {
 	// TODO: subscribe to attributes, devices, locations, etc.
-    log.debug( 'initialize' )
-    if ( settings.motions_entrance_exit ) {
-        log.debug( 'Subscribing to ${settings.motions_entrance_exit}');
-    	subscribe( settings.motions_entrance_exit, 'motion.active', entrance_exit_triggered_handler )
+    Log( 'initialize' )
+    if ( settings.motions_edge ) {
+        Log( "Subscribing to ${settings.motions_edge}");
+    	subscribe( settings.motions_edge, 'motion.active', edge_triggered_handler )
     }
     if ( settings.motions_occupied ) {
     	subscribe( settings.motions_occupied, 'motion.active', occupied_triggered_handler )
@@ -77,45 +79,49 @@ def initialize() {
 }
 
 def occupied_triggered_handler( evt ) {
-	log.debug('occupied_triggerd_handler')
-	if ( settings.can_be_occupied ) {  // Normal Room
+	Log("occupied_triggerd_handler. state: ${state}")
+	if ( !settings.can_not_be_occupied ) {  // Normal Room - Can be occupied
     	if ( !state.occupied ) {
+        	Log('Turning on lights due to not previous occupied')
         	turn_on_lights()
-        }
-        state.occupied = True
+
+			Log('Setting to occupied!')
+    	    state.occupied = true
+		}
         unschedule("exit_room")
     }
     else {	// Non occupiable room!
     	turn_on_lights()
-        room.occupied = True
+        state.occupied = true
         runIn( state.unoccupy_min_seconds, exit_room )
     }
 }
 
 
-def entrance_exit_triggered_handler( evt ) {
+def edge_triggered_handler( evt ) {
 	if (state.occupied) {	// People may be leaving!
-    	log.debug( "Room ${settings.displayName} is occupied, but someone could have exited")
+    	Log("Is occupied, but someone could have exited")
     	runIn( state.unoccupy_min_seconds, exit_room )
     }
     else {  // Room is unoccupied, people entering!
-    	log.debug( "Room ${settings.displayName} ${settings} is unoccupied!  But someome is coming in!")
+    	Log("Is unoccupied!  But someome is coming in!")
         turn_on_lights()
-        log.debug( 'Running in ${settings.occupy_min_seconds}')
+        Log("Running in ${settings.occupy_min_seconds}")
         runIn( state.occupy_min_seconds, exit_room )
-        log.debug( 'Ran')
+        Log('Ran')
     }
 }
 
 def exit_room() {
-	log.debug('exit_room')
-	state.occupied = False
+	Log('exit_room. setting occupied to false')    
+	state.occupied = false
     turn_off_lights()
 }
 
 def turn_off_lights() {
-	log.debug('turn_off_lights')
+	Log('turn_off_lights')
     if (settings.no_trigger_lights || !settings.switches) {
+    	Log('skipping due to no trigger lights')
     	return
     }
     
@@ -123,12 +129,20 @@ def turn_off_lights() {
 }
 
 def turn_on_lights() {
-	log.debug('turn_on_lights')
+	Log('turn_on_lights')
     if (settings.no_trigger_lights || !settings.switches) {
+    	Log('skipping due to no trigger lights')
     	return
+    }
+    if (state.occupied) {
+    	Log('skipping due to occupied!')
     }
 
 	settings.switches.on()
+}
+
+def Log( message ) {
+	log.debug("${app.label}: ${message}")
 }
 
 // TODO: implement event handlers
