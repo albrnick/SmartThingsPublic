@@ -34,17 +34,13 @@ preferences {
         input(name: "no_trigger_lights", title: "Disable lights/switches being triggered?", type: "bool" )
     }
     section(title: "Advanced", hideable: true, hidden: true) {
-       	input(name: "create_device", title: "Create a device to see room status and easily Disable lights/switches being triggered.", type: "bool" )      
     	input(name: "occupy_min_seconds", title: "How many seconds to wait for an occupy sensor to trigger before turning off lights? (Default 30)", type: "number",
         	required: "false")
     	input(name: "unoccupy_min_seconds", title: "How many seconds to wait for an occupy sensor to trigger before turning off lights? (Default 30)", type: "number",
         	required: "false")
     	input(name: "can_not_be_occupied", title: "Can't be occupied?  (on for hallways, stairs, etc..)", type: "bool" )      
+       	// input(name: "create_device", title: "Create a device to see room status and easily Disable lights/switches being triggered.", type: "bool" )      
 	}        
-    section(title: 'Super Advanced', hideable: true, hidden: true) {
-	   	input(name: "do_motion_motion_trigger", title: "Create hook for Smart Room - Motion/Motion/Trigger App", type: "bool" )      
-	   	input(name: "do_occupied_motion_trigger", title: "Create hook for Smart Room - Occupied/Motion/Trigger App", type: "bool" )              
-    }
 
 }
 
@@ -64,6 +60,8 @@ def updated() {
 	state.occupy_min_seconds = settings.occupy_min_seconds ? settings.occupy_min_seconds : 30
 	state.unoccupy_min_seconds = settings.unoccupy_min_seconds ? settings.unoccupy_min_seconds : 30
     state.no_trigger_lights = settings.no_trigger_lights
+    // state.create_device = settings.create_device
+    state.create_device = true
 
 	unsubscribe()
 	initialize()
@@ -78,29 +76,37 @@ def initialize() {
     }
     if ( settings.motions_occupied ) {
     	subscribe( settings.motions_occupied, 'motion.active', occupied_triggered_handler )
+        subscribe( settings.motions_occupied, 'motion.inactive', occupied_inactive_handler )
     }
-	// Doing in a device now - 
     subscribe( app, appTouch )
     
+    state.waiting_for_motions = []
     
 	state.app_device_id = getDeviceID('Smart Room', 'virtual device')
 	def app_device = getChildDevice( state.app_device_id )
 
-    if (settings.create_device && !app_device) {	// Create if needed
+    if (state.create_device && !app_device) {	// Create if needed
     	Log( "Adding Device" )
     	app_device = addChildDevice('albrnick', 'Smart Room', state.app_device_id, null, ['name': app.label])
     }
 
-	if (!settings.create_device && app_device) {   	// Delete if needed
+	if (!state.create_device && app_device) {   	// Delete if needed
     	Log( "Deleting Device" )
    		deleteChildDevice( app_device.deviceNetworkId ) 
         app_device = null
     }
     if ( app_device ) {
     	Log("subscribing ${app_device}")
+        // The app_device turning on/off will enable/disable lights going on/off automatically.
     	subscribe( app_device, 'state.on', app_device_on )
     	subscribe( app_device, 'state.off', app_device_off )
-        app_device.poll()
+        // The app_device activating will simulate an edge_trigger/lights on
+        subscribe( app_device, 'motion.active', edge_triggered_handler )	// 
+        
+        // Custom event to allow the device to turn on/off the room lights
+        subscribe( app_device, 'lightsOn', turn_lights_on_handler )
+        subscribe( app_device, 'lightsOff', turn_lights_off_handler )
+        
         app_device.set_state( state.occupied, state.no_trigger_lights )
     	Log("set state for ${app_device}")
 
@@ -109,9 +115,11 @@ def initialize() {
 
 def set_app_device_state() {
 	Log("set_app_device_state")
-	if (settings.create_device) {
+    
+	if (state.create_device) {
     	Log("trying to get child device ${state.app_device_id}")
     	def app_device = getChildDevice( state.app_device_id )
+        
         if (app_device) {
         	Log("Setting App Device State: ${state.occupied} ${state.no_trigger_lights}")
         	app_device.set_state( state.occupied, state.no_trigger_lights )
@@ -141,7 +149,7 @@ def app_device_handler( evt ){
 def uninstalled() {
 	unsubscribe()
 	unschedule()
-	def app_device = getChildDevice( settings.app_device_id )
+	def app_device = getChildDevice( state.app_device_id )
     if ( app_device ) {
     	Log( "Deleting Device due to uninstall" )
    		deleteChildDevice( app_device.deviceNetworkId )     
@@ -167,8 +175,16 @@ def set_occupied( value ) {
     set_app_device_state()
 }
 
+
+def occupied_inactive_handler( evt ) {
+	Log("occupied_inactive_handler: ${evt.displayName}")
+	state.waiting_for_motions.remove( evt.displayName )
+}
+
+
 def occupied_triggered_handler( evt ) {
-	Log("occupied_triggerd_handler. state: ${state}")
+	Log("occupied_triggerd_handler: ${evt.displayName}")
+
 	if ( !settings.can_not_be_occupied ) {  // Normal Room - Can be occupied
     	if ( !state.occupied ) {
         	Log('Turning on lights due to not previous occupied')
@@ -186,10 +202,14 @@ def occupied_triggered_handler( evt ) {
         set_app_device_state()
         runIn( state.unoccupy_min_seconds, exit_room )
     }
+    
+	state.waiting_for_motions.add( evt.displayName )
 }
 
 
+
 def edge_triggered_handler( evt ) {
+	Log( "Edge Trigger ${evt.device}")
 	if (state.occupied) {	// People may be leaving!
     	Log("Is occupied, but someone could have exited")
     	runIn( state.unoccupy_min_seconds, exit_room )
@@ -203,7 +223,23 @@ def edge_triggered_handler( evt ) {
     }
 }
 
+def turn_lights_on_handler( evt ) {
+	turn_lights_on()
+}
+
+def turn_lights_off_handler( evt ) {
+	turn_lights_off()
+}
+
+
 def exit_room() {
+	Log('exit_room')    
+
+	if (state.waiting_for_motions) {
+    	Log("exit_room.  Cant exit room due to waiting for motions: ${state.waiting_for_motions}")
+        return
+    }
+
 	Log('exit_room. setting occupied to false')    
 	state.occupied = false
     set_app_device_state()
