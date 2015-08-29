@@ -48,6 +48,7 @@ def installed() {
 	Log("Installed with settings: ${settings}")
 
 	state.occupied = false
+    state.allow_exit = true		// Allow exit to happen.  Fixes bug where unschedule doesn't seem to work
     // state.app_device = null
 
 	initialize()
@@ -121,7 +122,7 @@ def set_app_device_state() {
     	def app_device = getChildDevice( state.app_device_id )
         
         if (app_device) {
-        	Log("Setting App Device State: ${state.occupied} ${state.no_trigger_lights}")
+        	Log("Setting App Device State. Occupied: ${state.occupied} No_trigger_lights: ${state.no_trigger_lights}")
         	app_device.set_state( state.occupied, state.no_trigger_lights )
         } else {
         	log.debug("ERROR!  Should have an app_device but don't!")
@@ -178,14 +179,21 @@ def set_occupied( value ) {
 
 def occupied_inactive_handler( evt ) {
 	Log("occupied_inactive_handler: ${evt.displayName}")
+    Log("occupied_inactive_handler: PRE current list: ${state.waiting_for_motions}")
+
 	state.waiting_for_motions.remove( evt.displayName )
+    Log("occupied_inactive_handler: post current list: ${state.waiting_for_motions}")
+
 }
 
 
 def occupied_triggered_handler( evt ) {
-	Log("occupied_triggerd_handler: ${evt.displayName}")
+	Log("occupied_triggerd_handler: ${evt.displayName} can_no_be_occupied: ${settings.can_not_be_occupied}")
+   	Log("occupied_triggered_handler: PRE current list: ${state.waiting_for_motions}")
+
 
 	if ( !settings.can_not_be_occupied ) {  // Normal Room - Can be occupied
+    	Log('normal room')
     	if ( !state.occupied ) {
         	Log('Turning on lights due to not previous occupied')
         	turn_on_lights()
@@ -194,31 +202,47 @@ def occupied_triggered_handler( evt ) {
     	    state.occupied = true
             set_app_device_state()
 		}
-        unschedule("exit_room")
+        Log('Unscheduling "exit_room"')
+        unschedule('exit_room')
+        disallow_exit()
     }
     else {	// Non occupiable room!
+    	Log('unoccupiable normal room')
     	turn_on_lights()
         state.occupied = true
         set_app_device_state()
+        Log("Scheduling 'exit_room' in ${state.unoccupy_min_seconds}")
         runIn( state.unoccupy_min_seconds, exit_room )
+        allow_exit()
     }
     
-	state.waiting_for_motions.add( evt.displayName )
+    addToWaitingForMotions( evt.displayName )
+   	Log("occupied_triggered_handler: post current list: ${state.waiting_for_motions}")
+
 }
 
+def addToWaitingForMotions( name ) {
+	if ( !state.waiting_for_motions.contains( name )) {
+		state.waiting_for_motions.add( name )    
+    }
+}
 
 
 def edge_triggered_handler( evt ) {
 	Log( "Edge Trigger ${evt.device}")
 	if (state.occupied) {	// People may be leaving!
     	Log("Is occupied, but someone could have exited")
+        Log("Trying 'exit_room' in ${state.unoccupy_min_seconds}")
+
     	runIn( state.unoccupy_min_seconds, exit_room )
+        allow_exit()
     }
     else {  // Room is unoccupied, people entering!
     	Log("Is unoccupied!  But someome is coming in!")
         turn_on_lights()
-        Log("Running in ${settings.occupy_min_seconds}")
+        Log("Running 'exit_room' in ${state.occupy_min_seconds}")
         runIn( state.occupy_min_seconds, exit_room )
+        allow_exit()
         Log('Ran')
     }
 }
@@ -234,6 +258,11 @@ def turn_lights_off_handler( evt ) {
 
 def exit_room() {
 	Log('exit_room')    
+   	Log("exit_room. allow_exit: ${state.allow_exit}  waiting_for_motions: ${state.waiting_for_motions}")
+
+	if (!state.allow_exit) {
+    	Log('exit_room. aborting due to not allowed exit!')
+    }
 
 	if (state.waiting_for_motions) {
     	Log("exit_room.  Cant exit room due to waiting for motions: ${state.waiting_for_motions}")
@@ -268,6 +297,14 @@ def turn_on_lights() {
     }
 
 	settings.switches?.on()
+}
+
+def allow_exit() {
+	state.allow_exit = true
+}
+
+def disallow_exit() {
+	state.allow_exit = false
 }
 
 def Log( message ) {
