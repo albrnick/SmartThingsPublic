@@ -39,6 +39,7 @@ preferences {
     	input(name: "unoccupy_min_seconds", title: "How many seconds to wait for an occupy sensor to trigger before turning off lights? (Default 30)", type: "number",
         	required: "false")
     	input(name: "can_not_be_occupied", title: "Can't be occupied?  (on for hallways, stairs, etc..)", type: "bool" )      
+        input(name: "off_switches", title: "Lights/Switches to JUST turn off", type: "capability.switch", required: "false", multiple: "true")
        	// input(name: "create_device", title: "Create a device to see room status and easily Disable lights/switches being triggered.", type: "bool" )      
 	}        
 
@@ -115,10 +116,10 @@ def initialize() {
 }
 
 def set_app_device_state() {
-	Log("set_app_device_state")
+	// Log("set_app_device_state")
     
 	if (state.create_device) {
-    	Log("trying to get child device ${state.app_device_id}")
+    	// Log("trying to get child device ${state.app_device_id}")
     	def app_device = getChildDevice( state.app_device_id )
         
         if (app_device) {
@@ -131,15 +132,15 @@ def set_app_device_state() {
 }
 
 def app_device_on( evt ) {
-    log.debug("pre 2 ${state.no_trigger_lights}")
+    // log.debug("pre 2 ${state.no_trigger_lights}")
     state.no_trigger_lights = false
-    log.debug("post 2 ${state.no_trigger_lights}")
+    // log.debug("post 2 ${state.no_trigger_lights}")
 }
 
 def app_device_off( evt ) {
-    log.debug("pre 2 ${state.no_trigger_lights}")
+    // log.debug("pre 2 ${state.no_trigger_lights}")
     state.no_trigger_lights = true
-    log.debug("post 2 ${state.no_trigger_lights}")
+    // log.debug("post 2 ${state.no_trigger_lights}")
 }
 
 
@@ -178,8 +179,8 @@ def set_occupied( value ) {
 
 
 def occupied_inactive_handler( evt ) {
-	Log("occupied_inactive_handler: ${evt.displayName}")
-    Log("occupied_inactive_handler: PRE current list: ${state.waiting_for_motions}")
+	// Log("occupied_inactive_handler: ${evt.displayName}")
+    // Log("occupied_inactive_handler: PRE current list: ${state.waiting_for_motions}")
 
 	state.waiting_for_motions.remove( evt.displayName )
     Log("occupied_inactive_handler: post current list: ${state.waiting_for_motions}")
@@ -189,21 +190,21 @@ def occupied_inactive_handler( evt ) {
 
 def occupied_triggered_handler( evt ) {
 	Log("occupied_triggerd_handler: ${evt.displayName} can_no_be_occupied: ${settings.can_not_be_occupied}")
-   	Log("occupied_triggered_handler: PRE current list: ${state.waiting_for_motions}")
+   	// Log("occupied_triggered_handler: PRE current list: ${state.waiting_for_motions}")
 
 
 	if ( !settings.can_not_be_occupied ) {  // Normal Room - Can be occupied
-    	Log('normal room')
+    	// Log('normal room')
     	if ( !state.occupied ) {
-        	Log('Turning on lights due to not previous occupied')
+        	Log('Turning on lights due to not previous occupied and setting to occupied.')
         	turn_on_lights()
 
-			Log('Setting to occupied!')
+			// Log('Setting to occupied!')
     	    state.occupied = true
             set_app_device_state()
 		}
-        Log('Unscheduling "exit_room"')
-        unschedule('exit_room')
+        Log('Unscheduling "exit_room" (not really..)')
+        // unschedule('exit_room') // Is this too expensive?  
         disallow_exit()
     }
     else {	// Non occupiable room!
@@ -212,13 +213,12 @@ def occupied_triggered_handler( evt ) {
         state.occupied = true
         set_app_device_state()
         Log("Scheduling 'exit_room' in ${state.unoccupy_min_seconds}")
-        runIn( state.unoccupy_min_seconds, exit_room )
+        runInWrapper( state.unoccupy_min_seconds, exit_room )
         allow_exit()
     }
     
     addToWaitingForMotions( evt.displayName )
-   	Log("occupied_triggered_handler: post current list: ${state.waiting_for_motions}")
-
+   	// Log("occupied_triggered_handler: post current list: ${state.waiting_for_motions}")
 }
 
 def addToWaitingForMotions( name ) {
@@ -229,21 +229,21 @@ def addToWaitingForMotions( name ) {
 
 
 def edge_triggered_handler( evt ) {
-	Log( "Edge Trigger ${evt.device}")
+	// Log( "Edge Trigger ${evt.device}")
 	if (state.occupied) {	// People may be leaving!
-    	Log("Is occupied, but someone could have exited")
-        Log("Trying 'exit_room' in ${state.unoccupy_min_seconds}")
+    	Log("Edge Trigger [${evt.device}]. Is occupied, but someone could have exited")
+        // Log("Trying 'exit_room' in ${state.unoccupy_min_seconds}")
 
-    	runIn( state.unoccupy_min_seconds, exit_room )
+    	runInWrapper( state.unoccupy_min_seconds, exit_room )
         allow_exit()
     }
     else {  // Room is unoccupied, people entering!
-    	Log("Is unoccupied!  But someome is coming in!")
+    	Log("Edge Trigger [${evt.device}]. Is unoccupied!  But someome is coming in!")
         turn_on_lights()
         Log("Running 'exit_room' in ${state.occupy_min_seconds}")
-        runIn( state.occupy_min_seconds, exit_room )
+        runInWrapper( state.occupy_min_seconds, exit_room )
         allow_exit()
-        Log('Ran')
+        // Log('Ran')
     }
 }
 
@@ -257,11 +257,12 @@ def turn_lights_off_handler( evt ) {
 
 
 def exit_room() {
-	Log('exit_room')    
+	// Log('exit_room')    
    	Log("exit_room. allow_exit: ${state.allow_exit}  waiting_for_motions: ${state.waiting_for_motions}")
 
 	if (!state.allow_exit) {
     	Log('exit_room. aborting due to not allowed exit!')
+        return
     }
 
 	if (state.waiting_for_motions) {
@@ -269,7 +270,7 @@ def exit_room() {
         return
     }
 
-	Log('exit_room. setting occupied to false')    
+	// Log('exit_room. setting occupied to false')    
 	state.occupied = false
     set_app_device_state()
     
@@ -284,28 +285,43 @@ def turn_off_lights() {
     }
     
 	settings.switches?.off()
+	settings.off_switches?.off()
 }
 
 def turn_on_lights() {
-	Log('turn_on_lights')
     if (state.no_trigger_lights) {
-    	Log('skipping due to no trigger lights')
+    	Log('turn_on_lights. skipping due to no trigger lights')
     	return
     }
     if (state.occupied) {
-    	Log('skipping due to occupied!')
+    	Log('turn_on_lights. skipping due to occupied!')
+        return
     }
+	Log('turn_on_lights')
 
 	settings.switches?.on()
 }
 
 def allow_exit() {
+	// Log('allow_exit')
 	state.allow_exit = true
+    Log("allow_exit POST allow_exit: ${state.allow_exit}")
 }
 
 def disallow_exit() {
+	// Log('disallow_exit')
 	state.allow_exit = false
+    Log("disallow_exit POST allow_exit: ${state.allow_exit}")
 }
+
+// We need at least 60 seconds
+def runInWrapper( secs, func ) {
+	if ( secs < 60 ) {
+    	secs = 60
+    }
+    runIn( secs, func )
+}
+
 
 def Log( message ) {
 	log.debug("${app.label}: ${message}")
